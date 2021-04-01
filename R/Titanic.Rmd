@@ -1,0 +1,8 @@
+---
+title: "Titanic Challange"
+subtitle: "The famous data set from Kaggle"
+author: "Alexander Nyberg"
+date: '2021-04-01'
+output: pdf_document
+---
+
