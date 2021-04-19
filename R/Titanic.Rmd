@@ -4,5 +4,286 @@ subtitle: "The famous data set from Kaggle"
 author: "Alexander Nyberg"
 date: '2021-04-01'
 output: pdf_document
+fontsize: 18pt
 ---
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(corrplot)
+```
+
+Load the data sets.
+
+```{r include=FALSE}
+titanic_train <- read_csv("../Data/train.csv")
+titanic_test <- read_csv("../Data/test.csv")
+gender_sub <- read_csv("../Data/gender_submission.csv")
+
+# what sorts of people were more likely to survive?
+```
+
+## EDA
+
+### Training Data Analysis
+
+```{r}
+glimpse(titanic_train)
+summary(titanic_train)
+```
+
+Mean age for training set is 29.70 for the passengers, youngest being 0.42 and oldest being 80. We also indicate 177 NA's in age. 
+We can see that 38% of the people in the training set survived the disaster.
+
+Plotting the survival rate.
+
+```{r}
+SurvDeath <- titanic_train %>%
+  select(Survived)
+  
+  ggplot() + 
+    geom_bar(data = SurvDeath, aes(x = Survived))
+```
+
+```{r}
+# Identifying the missing values
+df_missValue <- data.frame(Key = character(1), Value = integer(1), Perc = integer(1))
+for (i in 1:ncol(titanic_train)) {
+  df_missValue <- rbind(df_missValue, 
+                        c(colnames(titanic_train[, i]), 
+                        sum(is.na(titanic_train[, i])), 
+                        sum(is.na(titanic_train[, i]))/nrow(titanic_train)))
+}
+df_missValue <- df_missValue %>%
+  mutate(Value = as.integer(Value), 
+         Perc = as.double(Perc)) %>%
+  filter(Value != 0) %>%
+  arrange(desc(Value))
+
+knitr::kable(df_missValue)
+
+df_missValue %>%
+  ggplot() + 
+    geom_bar(aes(x = Key, y = Value), stat = 'identity') + 
+    labs(x = "Variable", y = "Number of missing values", title = "Missing Values")
+```
+
+```{r}
+# Percentage of missing values
+df_missValuePerc <- data.frame(Key = character(1), Value = integer(1), Tot = integer(1))
+for (i in 1:ncol(titanic_train)) {
+  df_missValuePerc <- rbind(df_missValuePerc, 
+                        c(colnames(titanic_train[, i]), 
+                        sum(is.na(titanic_train[, i])), 
+                        nrow(titanic_train[, i])))
+}
+
+df_missValuePerc %>%
+  mutate(Value = as.integer(Value),
+         Tot = as.integer(Tot)) %>%
+  filter(Value != 0) %>%
+  mutate(PercentageMissing = Value/Tot*100) %>%
+  knitr::kable()
+```
+
+```{r warning=FALSE}
+titanic_train %>%
+  select(Survived, Sex, Age) %>%
+  group_by(Age) %>%
+  ggplot() + 
+    geom_col(aes(x = Age, y = Survived, fill = Sex), width = 1)
+```
+
+Majority of survivals is women. 
+
+```{r}
+# Total % of females that survived
+femalesAlive <- titanic_train %>%
+  filter(Sex == "female" & Survived == 1)
+
+totFemales <- titanic_train %>%
+  filter(Sex == "female")
+
+knitr::kable(nrow(femalesAlive)/nrow(totFemales), 
+             col.names = "SurvRateFemale")
+``` 
+
+```{r}
+# Total % males that survived
+malesAlive <- titanic_train %>%
+  filter(Sex == "male" & Survived == 1)
+
+totMales <- titanic_train %>%
+  filter(Sex == "male")
+
+knitr::kable(nrow(malesAlive)/nrow(totMales),
+             col.names = "SurvRateMale")
+```
+
+### Test Data Analysis
+
+In the test data, we can see that we are missing some *Age* values again. These will be fixed with the mean of the training data set. Additionally, we have a missing value in the *Fare* column as well. 
+
+```{r}
+glimpse(titanic_test)
+summary(titanic_test)
+```
+
+### Full Data Set
+
+Firstly, we might consider the specific variables that actually might effect death probability. For now, we'll drop PassengerId, Name and Ticket. We'll also drop the Cabin column since 77% of the data is missing.
+
+```{r message=FALSE}
+fullData <- titanic_train %>%
+  full_join(titanic_test) %>%
+  select(-PassengerId, -Name, -Ticket, -Cabin)
+
+knitr::kable(fullData[1:15, ])
+```
+
+Since we have two different outcomes in the *Sex* column, we can easily change these to numeric.
+
+```{r}
+for (i in 1:nrow(fullData)) {
+  if (fullData[i, "Sex"] == "male") {
+    fullData[i, "Sex"] <- "0"
+  }
+  else{
+    fullData[i, "Sex"] <- "1"
+  }
+}
+
+fullData <- fullData %>%
+  mutate(Sex = as.double(Sex))
+```
+
+
+### Handling Missing Values 
+
+With the missing data in age, a good choice could be to find the mean or the median and fill the missing values since we dont have that many missing values. Same goes for embarked.
+
+```{r}
+# Finding age mean
+meanAge <- fullData %>% 
+  select(Age) %>%
+  summarise(mean(Age, na.rm = TRUE)) %>%
+  round(digits = 1)
+```
+
+```{r}
+# Fill meanAge in missing Age values
+for (i in 1:nrow(fullData)) {
+  if (is.na(fullData[i, "Age"]) == TRUE) {
+    fullData[i, "Age"] <- meanAge
+  }
+}
+```
+
+```{r}
+# Fixing embarked data
+for (i in 1:nrow(fullData)) {
+  if (is.na(fullData[i, "Embarked"]))
+    fullData[i, "Embarked"] <- "S"
+}
+```
+
+```{r}
+# Fixing the missing data in Fare
+meanFare <- fullData %>% 
+  select(Fare) %>% 
+  summarise(median(Fare, na.rm = T)) %>% 
+  round(digits = 1)
+
+for (i in 1:nrow(fullData)) {
+  if (is.na(fullData[i, "Fare"]) == TRUE) {
+    fullData[i, "Fare"] <- meanFare
+  }
+}
+```
+
+```{r}
+# Double Checking no data missing
+df_missValue <- data.frame(Key = character(1), Value = integer(1), Perc = integer(1))
+for (i in 1:ncol(fullData)) {
+  df_missValue <- rbind(df_missValue, 
+                        c(colnames(fullData[, i]), 
+                        sum(is.na(fullData[, i])), 
+                        sum(is.na(fullData[, i]))/nrow(fullData)))
+}
+df_missValue <- df_missValue %>%
+  mutate(Value = as.integer(Value), 
+         Perc = as.double(Perc)) %>%
+  filter(Value != 0) %>%
+  arrange(desc(Value))
+
+knitr::kable(df_missValue)
+```
+
+The data set is now complete and we are to predict the 418 test individuals.
+
+### Prediction
+
+```{r}
+xTrain <- fullData %>%
+  filter(!is.na(Survived))
+xTest <- fullData %>%
+  filter(is.na(Survived))
+```
+
+```{r}
+tCorr <- cor(xTrain[,-8])
+
+corrplot(tCorr, method = "number", type = "upper")
+```
+
+#### Linear Regression
+
+```{r}
+# Linear Regression Prediction
+LR <- lm(Survived ~ . - Embarked, data = xTrain)
+summary(LR)
+```
+
+```{r}
+# Presenting the results
+testSurv <- data.frame("SurvivedAlle" = round(predict(LR, xTest)))
+testResult <- testSurv %>%
+  mutate(PassengerId = titanic_test$PassengerId) %>% 
+  select(PassengerId, SurvivedAlle)
+row.names(testResult) <- NULL
+
+knitr::kable(head(testResult))
+```
+
+```{r message=FALSE}
+# Comparison Results 99% Accuracy. Answers not owned or created by myself.
+compareData <- read_csv("../Data/submit.csv")
+```
+
+```{r}
+compareDF <- testResult %>%
+  left_join(compareData, by = "PassengerId") %>%
+  rename("Survived99PercentAcc" = Survived)
+knitr::kable(head(compareDF))
+```
+
+```{r}
+identVector <- c()
+for (i in 1:nrow(compareDF)) {
+  if (compareDF[i, "SurvivedAlle"] == compareDF[i, "Survived99PercentAcc"]) {
+    identVector <- append(identVector, T)
+  }
+  else{
+    identVector <- append(identVector, F)
+  }
+}
+compareDF$Alike <- identVector
+```
+
+```{r}
+compareDF %>%
+  group_by(Alike) %>% 
+  count() %>%
+  knitr::kable(col.names = c("Key", "Counts"))
+```
+
 
